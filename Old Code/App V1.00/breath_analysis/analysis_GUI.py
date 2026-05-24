@@ -309,10 +309,10 @@ def display_results(tab_widget, results):
                     ax.plot(time[event['start']:event['end']], press[event['start']:event['end']],
                             color='black', label=label)
 
-            ax.axhline(result['inhale_parameters']['threshold_dict']['amplitude_threshold'],
-                       linestyle='--', color='cyan', label='Thresholds')
-            ax.axhline(result['exhale_parameters']['threshold_dict']['amplitude_threshold'],
-                       linestyle='--', color='cyan')
+            # ax.axhline(result['inhale_parameters']['threshold_dict']['amplitude_threshold'],
+            #            linestyle='--', color='cyan', label='Thresholds')
+            # ax.axhline(result['exhale_parameters']['threshold_dict']['amplitude_threshold'],
+            #            linestyle='--', color='cyan')
 
             ax.set_title(filename + (f' — pressure{idx + 1}' if n_cols > 1 else '') +
                          ' — Breath Analysis')

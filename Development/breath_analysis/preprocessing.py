@@ -4,7 +4,7 @@ import numpy as np
 from scipy.signal import butter, filtfilt
 import matplotlib.pyplot as plt
 
-from constants import LOW_PASS_CUTOFF, WINDOW_NUM, RESAMPLED_FREQ, MANUAL_BASELINE
+from constants import LOW_PASS_CUTOFF, WINDOW_NUM, RESAMPLED_FREQ, MANUAL_BASELINE, INITIAL_UPSAMPLE
 
 def get_raw_data(csv_file):
     """
@@ -27,13 +27,9 @@ def get_raw_data(csv_file):
     """
     df = pd.read_csv(csv_file)
     
-    df = df.iloc[:80000, :]
-    
     # Calculate sampling rate from time data
-    # min_dt = df['time'].diff().min() # fix here
-    min_dt = 1/40
-    sampling_rate = 1/min_dt
-    time = np.arange(df['time'].iloc[0], df['time'].iloc[-1], min_dt)
+    sampling_rate = INITIAL_UPSAMPLE
+    time = np.arange(df['time'].iloc[0], df['time'].iloc[-1], 1/INITIAL_UPSAMPLE)
 
     # Detect all pressure columns (columns whose stripped name matches 'pressure<digits>')
     pressure_cols = sorted(
@@ -106,7 +102,7 @@ def get_baselines(result, n=WINDOW_NUM):
     baselines : list
         List of baseline values, one for each window
     """
-    pressure = -result['pressure_filtered']
+    pressure = result['pressure_filtered']
     pressure_len = len(pressure)
     all_baselines = []
     
@@ -193,7 +189,8 @@ def get_weighted_average_baseline(result):
         window_num = len(baseline_list)
 
         total_weight += window_num
-        baselines_weights.insert(0, window_num)  # Insert at beginning to have weights in order of increasing windows
+        baselines_weights.insert(0, baseline_idx)  # Insert at beginning to have weights in order of increasing windows
+        # fix
         
         # Calculate window positions - find middle indices of each window
         window_size = int(data_length * 2 / (window_num + 1))

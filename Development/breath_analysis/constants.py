@@ -1,16 +1,17 @@
 
 
+INITIAL_UPSAMPLE = 100
 # --- Filtering ---
 LOW_PASS_CUTOFF = 2         # Hz, cutoff frequency for low-pass Butterworth filter
 
 # --- Baseline estimation ---
-WINDOW_NUM = 5               # Number of window scales for baseline estimation
+WINDOW_NUM = 1              # Number of window scales for baseline estimation
 
 # --- Resampling ---
 RESAMPLED_FREQ = 1000        # Hz, target frequency after upsampling
 
 # --- Amplitude threshold ---
-AMPLITUDE_THRESHOLD_DIVISOR = 5   # Median of positive values is divided by this
+AMPLITUDE_THRESHOLD_DIVISOR = 3   # Median of positive values is divided by this
 
 # --- SE threshold (histogram method) ---
 SE_THRESHOLD_HIST_BINS  = 2000    # Number of bins for gap histogram

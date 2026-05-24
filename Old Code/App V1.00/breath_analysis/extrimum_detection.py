@@ -10,23 +10,8 @@ from constants import (
     PEAK_ZSCORE_THRESHOLD, PEAK_BOUNDARY_ZSCORE,
 )
 
-def find_amp_threshold(result, parameters, type_flag):
+def find_amp_se_thresholds(result, parameters, type_flag):
 
-    
-    if type_flag == 'inhale':
-        pressure_resampled = result['pressure_resampled']
-        
-    else:    
-        pressure_resampled = -result['pressure_resampled']
-    
-    # Define a threshold for inhale detection
-    positive_vals = pressure_resampled[pressure_resampled > 0]
-    amplitude_threshold = np.median(positive_vals) / AMPLITUDE_THRESHOLD_DIVISOR
-    parameters['threshold_dict'] = {'amplitude_threshold': amplitude_threshold}
-    
-    return parameters
-
-def find_se_threshold(result, parameters, type_flag):
     
     if type_flag == 'inhale':
         pressure_resampled = result['pressure_resampled']
@@ -37,7 +22,10 @@ def find_se_threshold(result, parameters, type_flag):
     resampled_freq = result['resampled_freq']
     freq_bc = result['samp_rate']
     
-    amplitude_threshold = parameters['threshold_dict']['amplitude_threshold']
+    # Define a threshold for inhale detection
+    positive_vals = pressure_resampled[pressure_resampled > 0]
+    amplitude_threshold = np.median(positive_vals) / AMPLITUDE_THRESHOLD_DIVISOR
+    parameters['threshold_dict'] = {'amplitude_threshold': amplitude_threshold}
     
     # Find points above the threshold
     target_points = np.where(pressure_resampled > amplitude_threshold)[0]

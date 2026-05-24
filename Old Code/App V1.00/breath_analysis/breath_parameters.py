@@ -199,26 +199,3 @@ def zelano_parameters(result):
         'cv_breath_volumes': cv_breath_volumes
     }
     return result
-
-# def recreate_baseline
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

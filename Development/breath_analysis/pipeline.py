@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from preprocessing import get_raw_data, low_pass_filter, get_baselines, get_weighted_average_baseline, upsample_data
-from extrimum_detection import find_amp_se_thresholds, find_se_points, find_peaks_durations, remove_outliers
+from extrimum_detection import find_amp_threshold, find_se_threshold, find_se_points, find_peaks_durations, remove_outliers
 from breath_parameters import pressure_switch, create_event_list, zelano_parameters
 
 def analyze_file(file_path, test_flag=False):
@@ -74,14 +74,16 @@ def analyze_breath(result):
     """
     inhale_parameters = {}
     
-    inhale_parameters = find_amp_se_thresholds(result, inhale_parameters, type_flag='inhale')
+    inhale_parameters = find_amp_threshold(result, inhale_parameters, type_flag='inhale')
+    inhale_parameters = find_se_threshold(result, inhale_parameters, type_flag='inhale')
     inhale_parameters = find_se_points(result, inhale_parameters, type_flag='inhale')
     inhale_parameters = find_peaks_durations(result, inhale_parameters, type_flag='inhale')
     inhale_parameters = remove_outliers(result, inhale_parameters)
 
     exhale_parameters = {}
 
-    exhale_parameters = find_amp_se_thresholds(result, exhale_parameters, type_flag='exhale')
+    exhale_parameters = find_amp_threshold(result, exhale_parameters, type_flag='exhale')
+    exhale_parameters = find_se_threshold(result, exhale_parameters, type_flag='exhale')
     exhale_parameters = find_se_points(result, exhale_parameters, type_flag='exhale')
     exhale_parameters = find_peaks_durations(result, exhale_parameters, type_flag='exhale')
     exhale_parameters = remove_outliers(result, exhale_parameters)
@@ -127,5 +129,5 @@ def analyze_breath(result):
 #     combined.to_csv(output_file, index=False)
 
 if __name__ == "__main__":
-    results = analyze_file("/home/aviv/Work/Anat's Lab/Breath Analysis/data/failed_3.csv", test_flag=True)
+    results = analyze_file("/home/aviv/Work/Anat's Lab/Breath Analysis/data/data_20221106_073425_AA013.csv", test_flag=True)
    
