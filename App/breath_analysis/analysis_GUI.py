@@ -566,6 +566,18 @@ class ExportWindow(QWidget):
         ('Extremum Values', 'extremum_value'),
     ]
 
+    # Zelano scalar parameters: (column header, zelano_parameters dict key)
+    ZELANO_SCALAR_FIELDS = [
+        ('Breathing Rate', 'breathing_rate'),
+        ('Inter-Breath Interval', 'inter_breath_interval'),
+        ('Tidal Volume', 'tidal_volume'),
+        ('Minute Ventilation', 'minute_ventilation'),
+        ('Duty Cycle', 'duty_cycle'),
+        ('CV Duty Cycle', 'cv_duty_cycle'),
+        ('CV Breathing Rate', 'cv_breathing_rate'),
+        ('CV Breath Volumes', 'cv_breath_volumes'),
+    ]
+
     def __init__(self, result, parent=None):
         super().__init__(parent)
         self.result = result
@@ -590,6 +602,18 @@ class ExportWindow(QWidget):
             self._toggle_btns[key] = btn
         fields_layout.addStretch()
         layout.addWidget(fields_row)
+
+        zelano_row = QWidget()
+        zelano_layout = QHBoxLayout(zelano_row)
+        zelano_layout.setContentsMargins(0, 0, 0, 0)
+        btn_zelano = QPushButton('Zelano Parameters')
+        btn_zelano.setCheckable(True)
+        btn_zelano.setChecked(True)
+        btn_zelano.setStyleSheet(checked_style)
+        zelano_layout.addWidget(btn_zelano)
+        zelano_layout.addStretch()
+        self._toggle_btns['zelano'] = btn_zelano
+        layout.addWidget(zelano_row)
 
         layout.addStretch()
 
@@ -645,7 +669,10 @@ class ExportWindow(QWidget):
                        for key, btn in self._toggle_btns.items()
                        if key in ev_keys and btn.isChecked() and key in event_cols}
 
-        if not selected_ts and not selected_ev:
+        include_zelano = self._toggle_btns['zelano'].isChecked()
+        zelano_cols = self._build_zelano_columns() if include_zelano else {}
+
+        if not selected_ts and not selected_ev and not zelano_cols:
             QMessageBox.warning(self, 'Nothing selected', 'Please select at least one column to export.')
             return
 
@@ -658,19 +685,56 @@ class ExportWindow(QWidget):
             path += '.csv'
 
         import pandas as pd
+        import csv
 
-        # Build DataFrame using Series so columns of different lengths are NaN-padded
-        # Use button labels as column headers
-        combined = {}
+        main_combined = {}
         for k, v in selected_ts.items():
-            combined[key_to_label[k]] = pd.Series(v)
+            main_combined[key_to_label[k]] = pd.Series(v)
         for k, v in selected_ev.items():
-            combined[key_to_label[k]] = pd.Series(v)
+            main_combined[key_to_label[k]] = pd.Series(v)
 
-        df = pd.DataFrame(combined)
-        df.to_csv(path, index=False)
+        main_df = pd.DataFrame(main_combined)
+
+        if zelano_cols:
+            zelano_df = pd.DataFrame({col: pd.Series(v) for col, v in zelano_cols.items()})
+            main_col_names = list(main_df.columns)
+            zelano_col_names = list(zelano_df.columns)
+            n_main = len(main_col_names)
+            n_zelano = len(zelano_col_names)
+            max_rows = max(len(main_df), len(zelano_df))
+
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                # Row 1: main headers | empty separator | 'Zelano Parameters' | empty for remaining zelano cols
+                writer.writerow(main_col_names + [''] + ['Zelano Parameters'] + [''] * (n_zelano - 1))
+                # Row 2: empty for main cols | empty separator | zelano column names
+                writer.writerow([''] * n_main + [''] + zelano_col_names)
+                # Data rows
+                for i in range(max_rows):
+                    row = []
+                    for col in main_col_names:
+                        row.append(main_df[col].iloc[i] if i < len(main_df) else '')
+                    row.append('')  # separator
+                    for col in zelano_col_names:
+                        row.append(zelano_df[col].iloc[i] if i < len(zelano_df) else '')
+                    writer.writerow(row)
+        else:
+            main_df.to_csv(path, index=False)
+
         QMessageBox.information(self, 'Saved', f'Data saved to {path}')
         self.close()
+
+    def _build_zelano_columns(self):
+        """Return a dict of Zelano parameter columns, keyed by human-readable label."""
+        zp = self.result.get('zelano_parameters')
+        if not zp:
+            return {}
+        cols = {}
+        for label, key in self.ZELANO_SCALAR_FIELDS:
+            cols[label] = [zp[key]]
+        # Per-breath volumes as a column
+        cols['Inhale-Exhale Volumes'] = zp.get('inhale_exhale_volumes', [])
+        return cols
 
 
 class IndependentEventsWindow(QWidget):

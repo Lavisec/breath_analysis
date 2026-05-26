@@ -136,11 +136,6 @@ def get_baselines(result, n=WINDOW_NUM):
                 counts, bins = np.histogram(window_data, bins=10000, range=(bins[max_index],
                                                                             bins[max_index + 1]))
                 bins = np.mean([bins[:-1], bins[1:]], axis=0)
-                # plt.xlabel('Pressure', fontsize=11)
-                # plt.ylabel('Frequency', fontsize=11)
-                # plt.title(f'Pressure Distribution Histogram - Window {i+1}/{n}', fontsize=12)
-                # plt.grid(True, alpha=0.3)
-                # plt.show()
                 
                 # Find the maximum of the histogram
                 max_index = counts.argmax()

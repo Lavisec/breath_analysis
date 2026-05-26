@@ -7,7 +7,7 @@ from constants import (
     SE_THRESHOLD_HIST_BINS, SE_THRESHOLD_HIST_RANGE, SE_THRESHOLD_HIST_DIVISOR,
     DC_EXCLUSION_FREQ, SE_THRESHOLD_FFT_DIVISOR,
     DURATION_LOW_THRESHOLD, DURATION_HIGH_THRESHOLD,
-    PEAK_ZSCORE_THRESHOLD, PEAK_BOUNDARY_ZSCORE,
+    PEAK_ZSCORE_THRESHOLD, PEAK_BOUNDARY_ZSCORE, SECUNDO_CONST
 )
 
 def find_amp_threshold(result, parameters, type_flag):
@@ -22,7 +22,7 @@ def find_amp_threshold(result, parameters, type_flag):
     # Define a threshold for inhale detection
     positive_vals = pressure_resampled[pressure_resampled > 0]
     amplitude_threshold = np.median(positive_vals) / AMPLITUDE_THRESHOLD_DIVISOR
-    parameters['threshold_dict'] = {'amplitude_threshold': amplitude_threshold}
+    parameters['threshold_dict'] = {'amplitude_threshold': SECUNDO_CONST/100}
     
     return parameters
 

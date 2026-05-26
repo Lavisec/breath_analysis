@@ -9,6 +9,7 @@ def pressure_switch(result):
     result['pressure_resampled'] = np.interp(result['time_resampled'],
                                              result['time'], pressure_raw_bc)
     return result
+
 def create_event_list(result):
     """
     Fill in later. 

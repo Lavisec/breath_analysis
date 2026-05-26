@@ -35,3 +35,5 @@ EVENT_SEARCH_WINDOW     = 30     # seconds, look-ahead/look-behind when finding 
 MAX_POST_INHALE_PAUSE   = 2.0    # seconds, max inhale-exhale pause to count as one breath
 
 MANUAL_BASELINE = 0
+
+SECUNDO_CONST = 18

@@ -129,5 +129,5 @@ def analyze_breath(result):
 #     combined.to_csv(output_file, index=False)
 
 if __name__ == "__main__":
-    results = analyze_file("/home/aviv/Work/Anat's Lab/Breath Analysis/data/data_20221106_073425_AA013.csv", test_flag=True)
+    results = analyze_file("/home/aviv/Work/Anat's Lab/Breath Analysis/data/failed_1.csv", test_flag=True)
    
