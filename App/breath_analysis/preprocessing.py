@@ -32,10 +32,7 @@ def get_raw_data(csv_file):
     time = np.arange(df['time'].iloc[0], df['time'].iloc[-1], 1/INITIAL_UPSAMPLE)
 
     # Detect all pressure columns (columns whose stripped name matches 'pressure<digits>')
-    pressure_cols = sorted(
-        [c for c in df.columns if c.strip().lower().startswith('pressure') and c.strip()[8:].isdigit()],
-        key=lambda c: int(c.strip()[8:])
-    )
+    pressure_cols = [c for c in df.columns if c.strip().lower().startswith('pressure')]
 
     pressures = {col.strip(): df[col].values for col in pressure_cols}
 

@@ -22,7 +22,10 @@ def find_amp_threshold(result, parameters, type_flag):
     # Define a threshold for inhale detection
     positive_vals = pressure_resampled[pressure_resampled > 0]
     amplitude_threshold = np.median(positive_vals) / AMPLITUDE_THRESHOLD_DIVISOR
-    parameters['threshold_dict'] = {'amplitude_threshold': SECUNDO_CONST/100}
+
+
+    measurement_discretization = np.min(np.diff(np.unique(np.sort(pressure_resampled))))
+    parameters['threshold_dict'] = {'amplitude_threshold': measurement_discretization * SECUNDO_CONST}
     
     return parameters
 
