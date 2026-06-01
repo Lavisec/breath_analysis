@@ -37,9 +37,9 @@ def preprocess_file(data):
         dataset['exh_amp_th'] = WMD(dataset, {'window_length':1000, 'overlap':50}, find_trough_th, trough_th_parameters={})
         # dataset['inh_amp_th'] = nl
         # dataset['exh_amp_th'] = -nl
-        dataset['time_th'] = WMD(dataset, {'window_length':1000, 'overlap':50},
-                                 find_time_th, time_th_parameters={})
-        # dataset['time_th'] = find_time_th(dataset, {})
+        # dataset['time_th'] = WMD(dataset, {'window_length':1000, 'overlap':50},
+                                 # find_time_th, time_th_parameters={})
+        dataset['time_th'] = find_time_th(dataset, {})
     
     return data
 
@@ -121,6 +121,8 @@ def upsample(time, pressure, target_rate):
     dict
         Updated dataset with upsampled 'time' and 'pressures_raw'.
     """
+    
+    
     ret_time = np.arange(time[0], time[-1] + 1/target_rate, 1/target_rate)
     ret_pressure = np.interp(ret_time, time, pressure)
     return ret_pressure, ret_time
@@ -275,115 +277,6 @@ def find_baseline(dataset, bl_parameters):
     baseline_val = bins[max_index]
 
     return baseline_val
-
-    # for j in range(n):
-    #     window_num = 2**j  # Exponential number of windows
-    #     # Calculate window size to fit all windows with 50% overlap spanning the entire data
-    #     # With 50% overlap: total_span = window_size + (window_size/2) * (num_windows - 1)
-    #     # Solving for window_size: window_size * (num_windows + 1) / 2 = pressure_len
-    #     window_size = int(pressure_len * 2 / (window_num + 1))
-    #     step_size = window_size // 2  # 50% overlap means step is half the window size
-        
-    #     baselines = []
-        
-    #     for i in range(window_num):
-    #         start_idx = i * step_size
-    #         end_idx = start_idx + window_size
-            
-    #         # Ensure we don't exceed the data bounds
-    #         if start_idx >= pressure_len:
-    #             break
-    #         if end_idx > pressure_len:
-    #             end_idx = pressure_len
-            
-    #         # Extract window and calculate baseline
-    #         window_data = pressure[start_idx:end_idx]
-            
-    #         if len(window_data) > 0:
-    #             # Create histogram for this window with 1000 bins
-    #             counts, bins = np.histogram(window_data, bins=100)
-    #             max_index = counts.argmax()
-    #             counts, bins = np.histogram(window_data, bins=10000, range=(bins[max_index],
-    #                                                                         bins[max_index + 1]))
-    #             bins = np.mean([bins[:-1], bins[1:]], axis=0)
-                
-    #             # Find the maximum of the histogram
-    #             max_index = counts.argmax()
-    #             baseline = bins[max_index]
-    #             baselines.append(baseline)
-        
-    #     baselines_vals.append(baselines)
-
-    # all_baselines = []
-    # baselines_weights = []
-    # total_weight = 0
-
-    # for baseline_idx, baseline_list in enumerate(baselines_vals):
-    #     # Number of windows for this baseline set
-    #     window_num = len(baseline_list)
-
-    #     total_weight += baseline_idx + 1  # Weight is proportional to the number of windows (more windows = more weight)
-    #     baselines_weights.insert(0, baseline_idx + 1)  # Insert at beginning to have weights in order of increasing windows
-    #     # fix
-        
-    #     # Calculate window positions - find middle indices of each window
-    #     window_size = int(pressure_len * 2 / (window_num + 1))
-    #     step_size = window_size // 2
-        
-    #     window_middle_indices = []
-    #     for i in range(window_num):
-    #         start_idx = i * step_size
-    #         end_idx = start_idx + window_size
-    #         if end_idx > pressure_len:
-    #             end_idx = pressure_len
-    #         middle_idx = (start_idx + end_idx) // 2
-    #         window_middle_indices.append(middle_idx)
-        
-    #     # Create full baseline curve with interpolation
-    #     baseline_curve = np.zeros(pressure_len)
-        
-    #     # Calculate first segment slope (for extrapolation at beginning)
-    #     if window_num > 1:
-    #         first_slope = (baseline_list[1] - baseline_list[0]) / (window_middle_indices[1] - window_middle_indices[0])
-    #     else:
-    #         first_slope = 0
-        
-    #     # Calculate last segment slope (for extrapolation at end)
-    #     if window_num > 1:
-    #         last_slope = (baseline_list[-1] - baseline_list[-2]) / (window_middle_indices[-1] - window_middle_indices[-2])
-    #     else:
-    #         last_slope = 0
-        
-    #     # Fill the beginning with extrapolation using first slope
-    #     if window_middle_indices[0] > 0:
-    #         idxs = np.arange(window_middle_indices[0])
-    #         baseline_curve[:window_middle_indices[0]] = baseline_list[0] - first_slope * (window_middle_indices[0] - idxs)
-        
-    #     # Interpolate between window midpoints
-    #     for i in range(len(window_middle_indices) - 1):
-    #         start_idx = window_middle_indices[i]
-    #         end_idx = window_middle_indices[i + 1]
-    #         start_val = baseline_list[i]
-    #         end_val = baseline_list[i + 1]
-            
-    #         # Linear interpolation
-    #         indices = np.arange(start_idx, end_idx + 1)
-    #         interpolated = start_val + (end_val - start_val) * (indices - start_idx) / (end_idx - start_idx)
-    #         baseline_curve[start_idx:end_idx + 1] = interpolated
-        
-    #     # Fill the end with extrapolation using last slope
-    #     if window_middle_indices[-1] + 1 < pressure_len:
-    #         idxs = np.arange(window_middle_indices[-1] + 1, pressure_len)
-    #         baseline_curve[window_middle_indices[-1] + 1:] = baseline_list[-1] + last_slope * (idxs - window_middle_indices[-1])
-        
-    #     all_baselines.append(baseline_curve)
-
-    # # Calculate weighted average baseline
-    # baseline=np.zeros(pressure_len)
-    # for i in range(len(all_baselines)):
-    #     baseline += all_baselines[i] * (baselines_weights[i] / total_weight)
-
-    # return baseline
 
 def find_peak_th(dataset, peak_th_parameters): 
     """

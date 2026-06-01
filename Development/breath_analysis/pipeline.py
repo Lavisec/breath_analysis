@@ -1,5 +1,7 @@
+import matplotlib.pyplot as plt
+
 from preprocessing import read_data, preprocess_file
-from extrimum_detection import find_extrimum_points
+from extrimum_detection import find_extremum_points
 
 def analyze_file(file_path):
     """
@@ -30,5 +32,5 @@ def analyze_file(file_path):
     return data
 
 if __name__ == "__main__":
-    file_path = "/home/aviv/Work/Anat's Lab/Breath Analysis/data/failed_1.csv"
+    file_path = "/home/aviv/Work/Anat's Lab/Breath Analysis/data/AA013_20220814_session2.csv"
     results = analyze_file(file_path)

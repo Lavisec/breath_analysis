@@ -14,5 +14,14 @@ BL_HIST_RES = 1000          # Number of bins for histogram in baseline estimatio
 DC_EXCLUSION_FREQ = 0.04    # Hz, FFT components below this are zeroed (DC removal)
 TIME_THRESHOLD_DIVISOR = 3 # Dominant period divided by this to get SE threshold
 
+# --- Extrimum detection ---
+SECOND_UPSAMPLE = 1000      # Hz, the upsample frequency for extrimum finding
+
+# --- Outlier removal ---
+DURATION_LOW_THRESHOLD  = 0.15   # seconds, minimum valid breath duration
+DURATION_HIGH_THRESHOLD = 10.0   # seconds, maximum valid breath duration
+PEAK_ZSCORE_THRESHOLD   = 2      # Z-score threshold for peak outlier detection
+PEAK_BOUNDARY_ZSCORE    = 18     # Sentinel z-score forced at array edges (code debt)
+
 
 

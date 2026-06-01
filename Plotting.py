@@ -148,6 +148,66 @@ vals_interp = decimate(new_fft, q=N//len(x))
 
 plt.plot(x, vals_interp[:1000])
 
+#%%
+
+plt.plot(data['pressure_upsampled'])
+
+for event in data['event_list']:
+    if event['type'] == 'inhale':
+        plt.plot(np.arange(event['start'], event['end']), data['pressure_upsampled'][event['start']:event['end']], color='red')
+        # plt.plot(event['extrimum'][0], results['pressure_resampled'][event['extrimum'][0].astype(int)], linestyle='None', marker='o', color='orange', mfc='none')
+    elif event['type'] == 'exhale':
+        plt.plot(np.arange(event['start'], event['end']), data['pressure_upsampled'][event['start']:event['end']], color='green')
+        # plt.plot(event['extrimum'][0], results['pressure_resampled'][event['extrimum'][0].astype(int)], linestyle='None', marker='o', color='orange', mfc='none')
+    else:
+        plt.plot(np.arange(event['start'], event['end']), data['pressure_upsampled'][event['start']:event['end']], color='black', linestyle='--')
+    
+    plt.plot(event['start'], data['pressure_upsampled'][event['start']], linestyle='None', marker='o', color='magenta', mfc='none')
+    
+plt.plot(data['inh_amp_th'], linestyle='--', color='cyan')
+plt.plot(data['inh_amp_th'], linestyle='--', color='cyan')
+
+#%% 
+
+ticks_font = 14
+labels_font = 14
+legend_font = 14
+
+plt.xticks(fontsize=ticks_font)
+plt.yticks(fontsize=ticks_font)
+
+plt.plot(dataset['time'], dataset['pressure'], label='Raw Data')
+plt.plot(dataset['time'], dataset['inh_amp_th'], label='Inhale Amplitude Threshold', linestyle='--', color='cyan')
+plt.plot(dataset['time'], dataset['exh_amp_th'], label='Inhale Amplitude Threshold', linestyle='--', color='magenta')
+plt.xlabel('Time [s]', fontsize=labels_font)
+plt.ylabel('Pressure [A.U.]', fontsize=labels_font)
+
+# plt.axvline(data['time_raw'][0], linestyle='--', color='red', label='First Window')
+# plt.axvline(data['time_raw'][(len(data['time_raw']) // 2) - 50], linestyle='--', color='red')
+
+# plt.axvline(data['time_raw'][len(data['time_raw']) // 4], linestyle='--', color='black', label='Second Window')
+# plt.axvline(data['time_raw'][(3 * len(data['time_raw'])) // 4], linestyle='--', color='black')
+
+# plt.axvline(data['time_raw'][(len(data['time_raw']) // 2) + 50], linestyle='--', color='cyan', label='Third Window')
+# plt.axvline(data['time_raw'][len(data['time_raw'])-1], linestyle='--', color='cyan')
+
+
+plt.legend(fontsize=legend_font)
+plt.grid()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
