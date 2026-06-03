@@ -2,221 +2,312 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 
-from constants import (
-    AMPLITUDE_THRESHOLD_DIVISOR,
-    SE_THRESHOLD_HIST_BINS, SE_THRESHOLD_HIST_RANGE, SE_THRESHOLD_HIST_DIVISOR,
-    DC_EXCLUSION_FREQ, SE_THRESHOLD_FFT_DIVISOR,
-    DURATION_LOW_THRESHOLD, DURATION_HIGH_THRESHOLD,
-    PEAK_ZSCORE_THRESHOLD, PEAK_BOUNDARY_ZSCORE, SECUNDO_CONST
-)
+from preprocessing import upsample
+from constants import (SECOND_UPSAMPLE, DURATION_LOW_THRESHOLD, DURATION_HIGH_THRESHOLD,
+                       PEAK_ZSCORE_THRESHOLD, PEAK_BOUNDARY_ZSCORE)
 
-def find_amp_threshold(result, parameters, type_flag):
-
-    
-    if type_flag == 'inhale':
-        pressure_resampled = result['pressure_resampled']
-        
-    else:    
-        pressure_resampled = -result['pressure_resampled']
-    
-    # Define a threshold for inhale detection
-    positive_vals = pressure_resampled[pressure_resampled > 0]
-    amplitude_threshold = np.median(positive_vals) / AMPLITUDE_THRESHOLD_DIVISOR
-
-
-    measurement_discretization = np.min(np.diff(np.unique(np.sort(pressure_resampled))))
-    parameters['threshold_dict'] = {'amplitude_threshold': measurement_discretization * SECUNDO_CONST}
-    
-    return parameters
-
-def find_se_threshold(result, parameters, type_flag):
-    
-    if type_flag == 'inhale':
-        pressure_resampled = result['pressure_resampled']
-        pressure_bc = result['pressure_bc']
-    else:    
-        pressure_resampled = -result['pressure_resampled']
-        pressure_bc = -result['pressure_bc']
-    resampled_freq = result['resampled_freq']
-    freq_bc = result['samp_rate']
-    
-    amplitude_threshold = parameters['threshold_dict']['amplitude_threshold']
-    
-    # Find points above the threshold
-    target_points = np.where(pressure_resampled > amplitude_threshold)[0]
-
-    # Find the most common gap between above-threshold points to set the split threshold
-    target_diffs = np.diff(target_points)
-    target_diffs_hist = np.histogram(target_diffs, bins=SE_THRESHOLD_HIST_BINS, range=SE_THRESHOLD_HIST_RANGE) # Code debt
-    most_common_diff = (target_diffs_hist[1][np.argmax(target_diffs_hist[0])]) / resampled_freq
-    se_threshold_hist = most_common_diff / SE_THRESHOLD_HIST_DIVISOR
-    parameters['threshold_dict']['se_threshold_hist'] = se_threshold_hist
-
-    # Find the dominant inhale frequency using FFT
-    n = len(pressure_bc)
-    fft_vals = np.abs(np.fft.rfft(pressure_bc))
-    fft_freqs = np.fft.rfftfreq(n, d=1.0 / freq_bc)
-
-    # Exclude DC component (index 0)
-    fft_vals[fft_freqs < DC_EXCLUSION_FREQ] = 0
-    dominant_freq = fft_freqs[np.argmax(fft_vals)]
-    target_period_samples = 1 / dominant_freq
-    target_se_threshold_fft = 0.5 * target_period_samples / SE_THRESHOLD_FFT_DIVISOR # Half the period
-    parameters['threshold_dict']['se_threshold_fft'] = target_se_threshold_fft
-    
-    return parameters
-
-def find_se_points(result, parameters, type_flag):
+def find_extremum_points(dataset):
     """
-    Find inhale start and end points in the pressure data by defining a threshold for points
-    to be considered as parts of an inhale, finding the ruling frequency of the signal and declaring
-    it as the frequency of the inhale, finding the differences between every two consecutive points
-    in the signal which are above the threshold, and declaring points with differences in the vicinity
-    of the period corresponding to the inhale frequency as inhale start and end points.
+    Detect extremum points (peaks and troughs) in the pressure signal.
 
     Parameters:
     -----------
-    result : dict
-        Dictionary containing 'time', 'pressure_filtered', and 'baseline' as returned by analyze_file().
+    dataset : dict
+        Dictionary containing 'time', 'pressure_filtered', 'inh_amp_th', and 'exh_amp_th'.
 
     Returns:
     --------
-    result : dict
-        Updated result dictionary with 'inhale_se_points' added as an (N, 2) array of
-        (start_idx, end_idx) pairs (indices into the resampled time axis) marking each inhale.
+    dataset : dict
+        Updated data dictionary with 'inhale_se_points' and 'exhale_se_points' added as lists of tuples
+        containing the start and end indices of each detected inhale and exhale.
     """
+    dataset['pressure_upsampled'], dataset['time_upsampled'] = upsample(
+        dataset['time'], dataset['pressure'], SECOND_UPSAMPLE
+    )
+    dataset['upsampled_samp_rate'] = SECOND_UPSAMPLE
+    # dataset['peaks'], dataset['troughs'] = find_extrema_scipy(dataset)
+    dataset['peaks'], dataset['troughs'] = find_extrema_se(dataset)
+    dataset['event_list'] = create_event_list(dataset)
+    dataset = remove_outliers(dataset)
 
-    if type_flag == 'inhale':
-        pressure_resampled = result['pressure_resampled']
-    else:
-        pressure_resampled = -result['pressure_resampled']
-    amplitude_threshold = parameters['threshold_dict']['amplitude_threshold']
-    resampled_freq = result['resampled_freq']
-    se_threshold = parameters['threshold_dict']['se_threshold_fft'] * resampled_freq
+    return dataset
 
-    # Find points above the threshold
-    target_points = np.where(pressure_resampled > amplitude_threshold)[0]
-    if len(target_points) == 0:
-        parameters['se_points'] = np.empty((0, 2), dtype=int)
-        return parameters
-
-    # Identify start and end indices of each inhale
-    target_diffs = np.diff(target_points)
-    start_idx = target_points[np.where(target_diffs > se_threshold)[0] + 1]
-    start_idx = [target_points[0], *start_idx]
-
-    # Adding the beginning of the first inhale and the end of the last inhale to the start and
-    # end indices respectively.
-    end_idx = target_points[np.where(target_diffs > se_threshold)[0]]
-    end_idx = [*end_idx, target_points[-1]]
-
-    se_points = np.column_stack((start_idx, end_idx))
-
-    # Dealing with cases where the start and end points are the same (e.g. when there is only one point above the threshold)
-    del_points = np.where((se_points[:, 1] - se_points[:, 0]) == 0)[0]
-    se_points = np.delete(se_points, del_points, axis=0)
-
-    parameters['se_points'] = se_points
-
-    return parameters
-
-def find_peaks_durations(result, parameters, type_flag):
+def find_extrema_scipy(dataset):
     """
-    Calculate inhale parameters such as duration and volume for each detected inhale.
+    Use scipy's find_peaks to detect peaks and troughs in the upsampled pressure signal.
 
     Parameters:
     -----------
-    result : dict
-        Dictionary containing 'time_resampled', 'pressure_filtered', and 'inhale_se_points'.
+    dataset : dict
+        Dictionary containing 'pressure_upsampled' and 'time_upsampled'.
 
     Returns:
     --------
-    result : dict
-        Updated result dictionary with 'inhale_parameters' added as a list of dicts containing
-        parameters for each inhale (e.g. duration, volume and peak).
+    peaks : list of tuples
+        List of (start_index, end_index) for each detected peak (inhale).
+    troughs : list of tuples
+        List of (start_index, end_index) for each detected trough (exhale).
     """
-    if type_flag == 'inhale':
-        pressure_resampled = result['pressure_resampled']
-    else:
-        pressure_resampled = -result['pressure_resampled']
-    time_resampled = result['time_resampled']
-    resampled_freq = result['resampled_freq']
-    se_points = parameters['se_points']
+    from scipy.signal import find_peaks
+    
+    # Fill in the logic to find peaks and troughs using scipy's find_peaks
 
-    duration = np.zeros((len(se_points), 1))
-    volume = np.zeros((len(se_points), 1))
-    peak = np.zeros((len(se_points), 2))
+def find_extrema_se(dataset):
+    """
+    Use the SE method to detect peaks and troughs in the upsampled pressure signal.
 
-    for i in range(len(se_points)):
-        start_idx = se_points[i, 0]
-        end_idx = se_points[i, 1]
+    Parameters:
+    -----------
+    dataset : dict
+        Dictionary containing 'pressure_upsampled', 'time_upsampled', 'inh_amp_th', and 'exh_amp_th'.
+
+    Returns:
+    --------
+    peaks : list of tuples
+        List of (start_index, end_index) for each detected peak (inhale).
+    troughs : list of tuples
+        List of (start_index, end_index) for each detected trough (exhale).
+    """
+    peaks = []
+    troughs = []
+
+    for i, type in enumerate(['inhale', 'exhale']):
+        pressure = (-1)**i * dataset['pressure_upsampled']
+        time = dataset['time_upsampled']
+        samp_rate = dataset['upsampled_samp_rate']
+        amp_th = dataset['inh_amp_th'] if type == 'inhale' else -dataset['exh_amp_th']
+        amp_th = np.interp(time, dataset['time'], amp_th)
+        # time_th = np.interp(time, dataset['time'], dataset['time_th'])
+        time_th = dataset['time_th'] * samp_rate
+
+        target_points = np.where(pressure > amp_th)[0]
+        if len(target_points) == 0:
+            print('find_extrema_se - No points above amp_th')
+            continue
+        target_diffs = np.diff(target_points)
+
+        start_idx = target_points[np.where(target_diffs > time_th)[0] + 1] # Code debt
+        start_idx = [target_points[0], *start_idx]
+        end_idx = target_points[np.where(target_diffs > time_th)[0]]
+        end_idx = [*end_idx, target_points[-1]]
+
+        se_points = np.column_stack((start_idx, end_idx))
+
+        # Dealing with cases where the start and end points are the same (e.g. when there is only one point above the threshold)
+        del_points = np.where((se_points[:, 1] - se_points[:, 0]) == 0)[0]
+        se_points = np.delete(se_points, del_points, axis=0)
+
+        extrima_arr = np.zeros((len(se_points), 2))
+        for j in range(len(se_points)):
+            start = se_points[j, 0]
+            end = se_points[j, 1]
+
+            ind = np.argmax(pressure[start:end]) + start
+            val = (-1)**i * pressure[ind]
+            extrima_arr[j] = np.array([ind, val])
         
-        duration[i] = time_resampled[end_idx] - time_resampled[start_idx]
-        volume[i] = np.trapezoid(pressure_resampled[start_idx:end_idx], dx=1/resampled_freq)
-        peak_ind = start_idx + np.argmax(pressure_resampled[start_idx:end_idx])
-        peak[i] = np.array([[peak_ind, pressure_resampled[peak_ind]]])
+        if type == 'inhale':
+            peaks = extrima_arr
+        else:
+            troughs = extrima_arr
+
+    return peaks, troughs
+
+def create_event_list(dataset):
+    """
+    Create a list of events (inhales, exhales and pauses) based on the detected peaks and troughs.
+
+    Parameters:
+    -----------
+    dataset : dict
+        Dictionary containing 'peaks' and 'troughs'.
+
+    Returns:
+    --------
+    event_list : list of tuples
+        List of (event_type, start_index, end_index) for each detected event, where event_type is 'inhale', 'exhale' or 'pause'.
+    """
+    dataset['breath_list'] = []
     
+    peaks = dataset['peaks']
+    troughs = dataset['troughs']
+    if len(peaks) == 0 or len(troughs) == 0:
+        print('create_event_list - No peaks or troughs found')
+        return []
+    pressure = dataset['pressure_upsampled']
+    freq = dataset['upsampled_samp_rate']
+
+    extrema_list = []
+    event_list = []
+
+    peaks_troughs = np.concatenate((peaks, troughs), axis=0)
+    sorted_peaks_troughs = peaks_troughs[np.argsort(peaks_troughs[:, 0])]
+
+    pressure_neg_idx = np.flatnonzero(pressure < 0)
+    pressure_pos_idx = np.flatnonzero(pressure > 0)
+
+    for ev in sorted_peaks_troughs:
+        if ev[1] > 0:
+            type = 'inhale'
+            peak_ind = int(ev[0])
+
+            left_first_neg = np.searchsorted(pressure_neg_idx, peak_ind) - 1
+            left_last_pos = pressure_neg_idx[left_first_neg] + 1 if left_first_neg >= 0 else 0
+            start = left_last_pos
+
+            right_first_neg = np.searchsorted(pressure_neg_idx, peak_ind)
+            right_last_pos = pressure_neg_idx[right_first_neg] - 1 if right_first_neg < len(pressure_neg_idx) else len(pressure) - 1
+            end = right_last_pos
+        else:
+            type = 'exhale'
+            trough_ind = int(ev[0])
+
+            left_first_pos = np.searchsorted(pressure_pos_idx, trough_ind) - 1
+            left_last_neg = pressure_pos_idx[left_first_pos] + 1 if left_first_pos >= 0 else 0
+            start = left_last_neg
+
+            right_first_pos = np.searchsorted(pressure_pos_idx, trough_ind)
+            right_last_neg = pressure_pos_idx[right_first_pos] - 1 if right_first_pos < len(pressure_pos_idx) else len(pressure) - 1
+            end = right_last_neg
+        
+        event = {
+            'start': start,
+            'end': end,
+            'type': type,
+            'duration': (end - start) / freq,
+            'extrimum': ev,
+            'volume': np.trapezoid(pressure[start:end], dx=1/freq)
+        }
+        extrema_list.append(event)
+
+    for ind in range(len(extrema_list) - 1):
+        event_list.append(extrema_list[ind])
+        event_list.append({
+            'start': extrema_list[ind]['end'],
+            'end': extrema_list[ind + 1]['start'],
+            'duration': (extrema_list[ind + 1]['start'] - extrema_list[ind]['end']) / freq,
+            'type': 'pause'
+        })
+    event_list.append(extrema_list[-1])
+
+    # Taking care of start and end of the signal
+    if event_list[0]['start'] > 0:
+        event_list.insert(0, {
+            'start': 0,
+            'end': event_list[0]['start'],
+            'duration': event_list[0]['start'] / freq,
+            'type': 'pause'
+        })
+    if event_list[-1]['end'] < len(pressure) - 1:
+        event_list.append({
+            'start': event_list[-1]['end'],
+            'end': len(pressure) - 1,
+            'duration': (len(pressure) - 1 - event_list[-1]['end']) / freq,
+            'type': 'pause'
+        })
+
+    breath_list = []
+    for ind in range(len(event_list) - 2):
+        if event_list[ind]['type'] == 'inhale' and event_list[ind + 2]['type'] == 'exhale':
+            breath_list.append({
+                'start': event_list[ind]['start'],
+                'end': event_list[ind + 2]['end'],
+                'inhale_exhale': (event_list[ind], event_list[ind + 2])
+            })
+    dataset['breath_list'] = breath_list
+    return event_list
+
+def remove_outliers(dataset):
+    """
+    Remove outliers from the detected peaks and troughs based on their amplitude.
+
+    Parameters:
+    -----------
+    dataset : dict
+        Dictionary containing 'peaks' and 'troughs'.
+
+    Returns:
+    --------
+    dataset : dict
+        Updated dataset dictionary with outliers removed from 'peaks' and 'troughs'.
+    """
+    event_list = dataset['event_list']
+    peaks = dataset['peaks']
+    troughs = dataset['troughs']
+    if len(peaks) == 0 or len(troughs) == 0:
+        print('remove_outliers - No peaks or troughs found')
+        return dataset
+
+    delete_points = []
+
+    for i, extrema in enumerate([peaks, troughs]):
+        extrema_pos = (-1)**i * extrema
+        peak_values = extrema_pos[:, 1]
+        sort_order = np.argsort(peak_values)
+        sorted_peak_values = peak_values[sort_order]
+
+        z_peaks = np.append(stats.zscore(np.diff(np.log(sorted_peak_values))), 0)
+
+        mid = len(sort_order) // 2
+
+        first_z = z_peaks[:mid]
+        last_z = z_peaks[mid:]
+        
+        first_z[0] = PEAK_BOUNDARY_ZSCORE # Code debt here
+        last_z[-1] = PEAK_BOUNDARY_ZSCORE
+        
+        first_pos = np.where(first_z > PEAK_ZSCORE_THRESHOLD)[0][-1]
+        last_pos = mid + np.where(last_z > PEAK_ZSCORE_THRESHOLD)[0][0]
+
+        mask = np.zeros(len(sort_order), dtype=bool)
+        mask[first_pos:last_pos + 1] = True
+        delete_points.append(extrema[sort_order[~mask], 0])
     
+    delete_points = np.concatenate(delete_points)
 
-    parameters['parameters'] = {
-        'duration': duration,
-        'volume': volume,
-        'peaks': peak
-    }
+    for event in event_list:
+        type = event['type']
+        duration = event['duration']
 
-    return parameters
+        if type == 'inhale' or type == 'exhale':
+            extrimum_idx = event['extrimum'][0]
 
-def remove_outliers(result, parameters):
+            if duration < DURATION_LOW_THRESHOLD or duration > DURATION_HIGH_THRESHOLD:
+                event['type'] = 'pause'
+                continue
+
+            if extrimum_idx in delete_points:
+                event['type'] = 'pause'
+                continue
+
+    dataset['event_list'] = event_list
     
-    peaks = parameters['parameters']['peaks']
-    durations = parameters['parameters']['duration']
+    return dataset
 
-    duration_low_threshold = DURATION_LOW_THRESHOLD
-    duration_high_threshold = DURATION_HIGH_THRESHOLD
 
-    parameters['threshold_dict']['duration_low_threshold'] = duration_low_threshold
-    parameters['threshold_dict']['duration_high_threshold'] = duration_high_threshold
 
-    # plt.hist(result['parameters']['duration'], bins=2000, color='blue', alpha=0.7, range=(0, 20))
-    # plt.show()
 
-    delete_points_durations = np.where((durations < duration_low_threshold) 
-                                       | (durations > duration_high_threshold))[0]
-    parameters['outliers'] = {'duration_outliers': delete_points_durations}
 
-    parameters['parameters']['duration'] = np.delete(parameters['parameters']['duration'], delete_points_durations, axis=0)
-    parameters['parameters']['volume'] = np.delete(parameters['parameters']['volume'], delete_points_durations, axis=0)
-    parameters['parameters']['peaks'] = np.delete(parameters['parameters']['peaks'], delete_points_durations, axis=0)
-    parameters['se_points'] = np.delete(parameters['se_points'], delete_points_durations, axis=0)
-    
-    peaks = parameters['parameters']['peaks']
-    
-    peak_values = peaks[:, 1]
-    sort_order = np.argsort(peak_values)
-    sorted_peak_values = peak_values[sort_order]
 
-    z_peaks = np.append(stats.zscore(np.diff(np.log(sorted_peak_values))), 0)
 
-    mid = len(sort_order) // 2
 
-    first_z = z_peaks[:mid]
-    last_z = z_peaks[mid:]
-    
-    first_z[0] = PEAK_BOUNDARY_ZSCORE # Code debt here
-    last_z[-1] = PEAK_BOUNDARY_ZSCORE
-    
-    first_pos = np.where(first_z > PEAK_ZSCORE_THRESHOLD)[0][-1]
-    last_pos = mid + np.where(last_z > PEAK_ZSCORE_THRESHOLD)[0][0]
 
-    mask = np.zeros(len(sort_order), dtype=bool)
-    mask[first_pos:last_pos + 1] = True
-    delete_points_peaks = sort_order[~mask]
-    parameters['outliers']['peak_outliers'] = delete_points_peaks
 
-    parameters['parameters']['duration'] = np.delete(parameters['parameters']['duration'], delete_points_peaks, axis=0)
-    parameters['parameters']['volume'] = np.delete(parameters['parameters']['volume'], delete_points_peaks, axis=0)
-    parameters['parameters']['peaks'] = np.delete(parameters['parameters']['peaks'], delete_points_peaks, axis=0)
-    parameters['se_points'] = np.delete(parameters['se_points'], delete_points_peaks, axis=0)
 
-    return parameters
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from constants import (INITIAL_UPSAMPLE, SECUNDO_CONST, DC_EXCLUSION_FREQ, TIME_THRESHOLD_DIVISOR,
-                       WINDOW_NUM, BL_HIST_RES, AMP_DISCRATISATION)
+                       WINDOW_NUM, BL_HIST_RES, AMP_DISCRATISATION, BASELINE_WINDOW, INH_AMP_WINDOW, EXH_AMP_WINDOW)
 
 def preprocess_file(data):
     """
@@ -29,12 +29,12 @@ def preprocess_file(data):
         dataset['nl'] = nl
         dataset['pressure'], dataset['time'] = upsample(dataset['time_raw'], dataset['pressure_raw'], INITIAL_UPSAMPLE)
         dataset['samp_rate'] = INITIAL_UPSAMPLE
-        dataset['baseline'] = WMD(dataset, {'window_length':1000, 'overlap':50},
+        dataset['baseline'] = WMD(dataset, {'window_length':BASELINE_WINDOW, 'overlap':50},
                                   find_baseline, bl_parameters={'n':WINDOW_NUM })
         # dataset['baseline'] = find_baseline(dataset, {'n': 5})
         dataset['pressure_bc'] = dataset['pressure'] - dataset['baseline']
-        dataset['inh_amp_th'] = WMD(dataset, {'window_length':1000, 'overlap':50}, find_peak_th, peak_th_parameters={})
-        dataset['exh_amp_th'] = WMD(dataset, {'window_length':1000, 'overlap':50}, find_trough_th, trough_th_parameters={})
+        dataset['inh_amp_th'] = WMD(dataset, {'window_length':INH_AMP_WINDOW, 'overlap':50}, find_peak_th, peak_th_parameters={})
+        dataset['exh_amp_th'] = WMD(dataset, {'window_length':EXH_AMP_WINDOW, 'overlap':50}, find_trough_th, trough_th_parameters={})
         # dataset['inh_amp_th'] = nl
         # dataset['exh_amp_th'] = -nl
         # dataset['time_th'] = WMD(dataset, {'window_length':1000, 'overlap':50},

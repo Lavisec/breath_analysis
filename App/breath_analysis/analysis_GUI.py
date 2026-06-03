@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QListWidgetItem, QLabel, QSizePolicy,
-    QFileDialog, QMessageBox, QInputDialog, QTabWidget, QToolButton, QMenu, QAction
+    QFileDialog, QMessageBox, QInputDialog, QTabWidget, QToolButton, QMenu, QAction, QComboBox
 )
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -210,9 +210,8 @@ def collect_csv_files(path):
 
 def run_analysis_on_files(csv_files):
     """
-    Run the pipeline up to baseline calculation for a list of CSV files.
+    Run pipeline preprocessing up to baseline calculation for a list of CSV files.
     Returns intermediate results ready for display and optional baseline editing.
-    Call pipeline.continue_analysis(result) on each result to finish the analysis.
 
     Parameters
     ----------
@@ -259,13 +258,14 @@ def display_results(tab_widget, results):
         state = {'index': 0, 'modes': ['baseline'] * n_cols}
         editors = [None]          # one editor slot, replaced on switch
         baseline_lines = [None]   # same
+        view_limits = [None]      # saved xlim/ylim: (xlim, ylim) tuple or None
 
         def draw_pressure(idx, fig=fig, ax=ax, canvas=canvas, file_results=file_results,
                           filename=filename, editors=editors, baseline_lines=baseline_lines,
                           toolbar_ref=None):
             result = file_results[idx]
             ax.cla()
-            ax.plot(result['time'], result['pressure_filtered'],
+            ax.plot(result['time'], result['pressure'],
                     label='Filtered Pressure', color='orange', alpha=0.8)
             bl, = ax.plot(result['time'], result['baseline'],
                           label='Baseline', color='green', alpha=0.8, linewidth=2)
@@ -273,23 +273,34 @@ def display_results(tab_widget, results):
             ax.set_xlabel('Time (s)')
             ax.set_ylabel('Pressure (arbitrary units)')
             ax.legend()
+            ax.grid(True)
             baseline_lines[0] = bl
             editors[0] = BaselineEditor(ax, bl, canvas)
             canvas.draw_idle()
 
         def draw_breath_analysis(idx, fig=fig, ax=ax, canvas=canvas,
-                                 file_results=file_results, filename=filename, n_cols=n_cols):
+                                 file_results=file_results, filename=filename, n_cols=n_cols, view_limits=view_limits, preserve_view=True):
             result = file_results[idx]
-            # Run post-baseline analysis if it hasn't been done yet
-            if 'event_list' not in result:
+            # Run post-baseline analysis if it hasn't been done yet.
+            # We also ensure zelano_parameters exist for export.
+            if 'event_list' not in result or 'zelano_parameters' not in result:
                 file_results[idx] = pipeline.continue_analysis(result)
                 result = file_results[idx]
 
+            # Save current view limits before clearing (if preserve_view and any data exists)
+            saved_limits = None
+            if preserve_view:
+                try:
+                    if ax.has_data():
+                        saved_limits = (ax.get_xlim(), ax.get_ylim())
+                except Exception:
+                    pass
+
             ax.cla()
-            press = result['pressure_resampled']
-            time = result['time_resampled']
+            press = result['pressure_upsampled']
+            time = result['time_upsampled']
             ax.plot(time, press, color='blue', alpha=0.4)
-            # ax.plot(time, result['pressure_resampled_lp'], color='cyan', alpha=0.6)
+            # ax.plot(time, result['pressure_upsampled_lp'], color='cyan', alpha=0.6)
 
             seen_labels = set()
             for event in result['event_list']:
@@ -309,16 +320,29 @@ def display_results(tab_widget, results):
                     ax.plot(time[event['start']:event['end']], press[event['start']:event['end']],
                             color='black', label=label)
 
-            ax.axhline(result['inhale_parameters']['threshold_dict']['amplitude_threshold'],
-                       linestyle='--', color='cyan', label='Thresholds')
-            ax.axhline(result['exhale_parameters']['threshold_dict']['amplitude_threshold'],
-                       linestyle='--', color='cyan')
+            inh_th = result.get('inh_amp_th')
+            exh_th = result.get('exh_amp_th')
+            if inh_th is not None and exh_th is not None:
+                inh_th_u = np.interp(time, result['time'], inh_th)
+                exh_th_u = np.interp(time, result['time'], exh_th)
+                ax.plot(time, inh_th_u, linestyle='--', color='cyan', label='Thresholds')
+                ax.plot(time, exh_th_u, linestyle='--', color='cyan')
 
             ax.set_title(filename + (f' — pressure{idx + 1}' if n_cols > 1 else '') +
                          ' — Breath Analysis')
             ax.set_xlabel('Sample (resampled)')
             ax.set_ylabel('Pressure (baseline corrected)')
             ax.legend()
+            ax.grid(True)
+
+            # Restore saved view limits if available
+            if saved_limits is not None:
+                try:
+                    ax.set_xlim(saved_limits[0])
+                    ax.set_ylim(saved_limits[1])
+                except Exception:
+                    pass
+
             canvas.draw_idle()
 
         draw_pressure(0)
@@ -331,14 +355,23 @@ def display_results(tab_widget, results):
         btn_undo = QPushButton('Undo')
         btn_continue = QPushButton('Continue to Breath Analysis')
         btn_back = QPushButton('Back to Pre-Processing')
-        btn_independent = QPushButton('Analyze Independent Events')
+        btn_choose_event = QPushButton('Choose Event')
         btn_export = QPushButton('Export')
 
         btn_stop.setVisible(False)
         btn_undo.setVisible(False)
         btn_back.setVisible(False)
-        btn_independent.setVisible(False)
+        btn_choose_event.setVisible(False)
         btn_export.setVisible(False)
+
+        # One-shot click handler id for "Choose Event" mode.
+        choose_event_cid = [None]
+
+        def clear_choose_event_mode(canvas=canvas, choose_event_cid=choose_event_cid):
+            if choose_event_cid[0] is not None:
+                canvas.mpl_disconnect(choose_event_cid[0])
+                choose_event_cid[0] = None
+            canvas.setCursor(Qt.ArrowCursor)
 
         # --- pressure selector button (top-right) ---
         btn_pressure = QToolButton()
@@ -354,13 +387,15 @@ def display_results(tab_widget, results):
                             draw_breath=draw_breath_analysis,
                             btn_edit=btn_edit, btn_stop=btn_stop, btn_undo=btn_undo,
                             btn_continue=btn_continue, btn_back=btn_back,
-                            btn_independent=btn_independent, btn_export=btn_export):
+                            btn_choose_event=btn_choose_event, btn_export=btn_export,
+                            clear_choose_event_mode=clear_choose_event_mode):
                 def switch():
                     if state['index'] == idx:
                         return
                     # stop any active editing before switching
                     if editors[0] is not None:
                         editors[0].set_active(False)
+                    clear_choose_event_mode()
                     state['index'] = idx
                     btn.setText(name)
                     # Always hide edit-in-progress buttons when switching
@@ -370,14 +405,14 @@ def display_results(tab_widget, results):
                         btn_edit.setVisible(True)
                         btn_continue.setVisible(True)
                         btn_back.setVisible(False)
-                        btn_independent.setVisible(False)
+                        btn_choose_event.setVisible(False)
                         btn_export.setVisible(False)
                         draw_baseline(idx)
                     else:
                         btn_edit.setVisible(False)
                         btn_continue.setVisible(False)
                         btn_back.setVisible(True)
-                        btn_independent.setVisible(True)
+                        btn_choose_event.setVisible(True)
                         btn_export.setVisible(True)
                         draw_breath(idx)
                 return switch
@@ -408,13 +443,8 @@ def display_results(tab_widget, results):
                 ed = editors[0]
                 if ed:
                     ed.set_active(False)
-                    # Write the edited baseline back into the result and re-run
-                    # the post-baseline steps of the pipeline.
                     idx = state['index']
-                    result = file_results[idx]
-                    result['baseline'] = ed._baseline.copy()
-                    file_results[idx] = pipeline.continue_analysis(result)
-                    # Redraw so the plot reflects any downstream changes
+                    file_results[idx] = pipeline.update_baseline(file_results[idx], ed._baseline)
                     draw(idx)
                 btn_stop.setVisible(False)
                 btn_undo.setVisible(False)
@@ -435,17 +465,14 @@ def display_results(tab_widget, results):
                           file_results=file_results,
                           btn_edit=btn_edit, btn_continue=btn_continue,
                           btn_stop=btn_stop, btn_undo=btn_undo,
-                          btn_back=btn_back, btn_independent=btn_independent,
+                          btn_back=btn_back, btn_choose_event=btn_choose_event,
                           btn_export=btn_export):
             def on_continue():
                 ed = editors[0]
                 if ed is not None and ed.active:
-                    # Save the edited baseline and re-run the pipeline, same as Stop Editing
                     ed.set_active(False)
                     idx = state['index']
-                    result = file_results[idx]
-                    result['baseline'] = ed._baseline.copy()
-                    file_results[idx] = pipeline.continue_analysis(result)
+                    file_results[idx] = pipeline.update_baseline(file_results[idx], ed._baseline)
                     btn_stop.setVisible(False)
                     btn_undo.setVisible(False)
                 elif ed is not None:
@@ -454,21 +481,22 @@ def display_results(tab_widget, results):
                 btn_edit.setVisible(False)
                 btn_continue.setVisible(False)
                 btn_back.setVisible(True)
-                btn_independent.setVisible(True)
+                btn_choose_event.setVisible(True)
                 btn_export.setVisible(True)
-                draw_breath(state['index'])
+                draw_breath(state['index'], preserve_view=False)
             return on_continue
 
         btn_continue.clicked.connect(make_continue())
 
         def make_back(state=state, editors=editors, draw_baseline=draw_pressure,
                       btn_edit=btn_edit, btn_continue=btn_continue,
-                      btn_back=btn_back, btn_independent=btn_independent,
-                      btn_export=btn_export):
+                      btn_back=btn_back, btn_choose_event=btn_choose_event,
+                      btn_export=btn_export, clear_choose_event_mode=clear_choose_event_mode):
             def on_back():
+                clear_choose_event_mode()
                 state['modes'][state['index']] = 'baseline'
                 btn_back.setVisible(False)
-                btn_independent.setVisible(False)
+                btn_choose_event.setVisible(False)
                 btn_export.setVisible(False)
                 btn_edit.setVisible(True)
                 btn_continue.setVisible(True)
@@ -477,23 +505,77 @@ def display_results(tab_widget, results):
 
         btn_back.clicked.connect(make_back())
 
-        def make_open_independent(state=state, file_results=file_results):
-            def open_independent():
+        def make_choose_event(state=state, file_results=file_results, ax=ax, canvas=canvas,
+                              choose_event_cid=choose_event_cid,
+                              clear_choose_event_mode=clear_choose_event_mode,
+                              draw_breath=draw_breath_analysis):
+            def choose_event():
                 idx = state['index']
                 result = file_results[idx]
-                win = IndependentEventsWindow(result)
-                win.show()
-                # Keep a reference so the window isn't garbage-collected
-                tab_content._independent_windows = getattr(tab_content, '_independent_windows', [])
-                tab_content._independent_windows.append(win)
-            return open_independent
+                if 'event_list' not in result:
+                    file_results[idx] = pipeline.continue_analysis(result)
+                    result = file_results[idx]
 
-        btn_independent.clicked.connect(make_open_independent())
+                event_list = result.get('event_list') or []
+                time_axis = result.get('time_upsampled')
+                if not event_list or time_axis is None or len(time_axis) == 0:
+                    QMessageBox.information(tab_widget, 'No events',
+                                            'No events available for this pressure.')
+                    return
+
+                clear_choose_event_mode()
+                canvas.setCursor(Qt.CrossCursor)
+
+                def on_click(event):
+                    if event.inaxes is not ax or event.xdata is None:
+                        return
+                    clear_choose_event_mode()
+
+                    pos = np.searchsorted(time_axis, event.xdata)
+                    sample_idx = int(np.clip(pos, 0, len(time_axis) - 1))
+                    if sample_idx > 0 and abs(time_axis[sample_idx] - event.xdata) > abs(time_axis[sample_idx - 1] - event.xdata):
+                        sample_idx -= 1
+
+                    chosen = None
+                    chosen_idx = None
+                    for ev_idx, ev in enumerate(event_list):
+                        if int(ev['start']) <= sample_idx <= int(ev['end']):
+                            chosen = ev
+                            chosen_idx = ev_idx
+                            break
+
+                    if chosen is None:
+                        QMessageBox.information(
+                            tab_widget,
+                            'No matching event',
+                            f'No event contains index {sample_idx}.'
+                        )
+                        return
+
+                    def on_event_type_changed():
+                        # Redraw the main breath-analysis plot to reflect updated event colors/types.
+                        if state['modes'][idx] == 'breath_analysis' and state['index'] == idx:
+                            draw_breath(idx)
+
+                    win = ChosenEventWindow(result, event_list, chosen_idx, sample_idx,
+                                            on_event_type_changed=on_event_type_changed)
+                    win.show()
+                    tab_content._chosen_event_windows = getattr(tab_content, '_chosen_event_windows', [])
+                    tab_content._chosen_event_windows.append(win)
+
+                choose_event_cid[0] = canvas.mpl_connect('button_press_event', on_click)
+
+            return choose_event
+
+        btn_choose_event.clicked.connect(make_choose_event())
 
         def make_export(state=state, file_results=file_results):
             def on_export():
                 idx = state['index']
                 result = file_results[idx]
+                if 'zelano_parameters' not in result:
+                    file_results[idx] = pipeline.continue_analysis(result)
+                    result = file_results[idx]
                 win = ExportWindow(result)
                 win.show()
                 tab_content._export_windows = getattr(tab_content, '_export_windows', [])
@@ -534,7 +616,7 @@ def display_results(tab_widget, results):
         btn_row3 = QWidget()
         btn_row3_layout = QHBoxLayout(btn_row3)
         btn_row3_layout.setContentsMargins(0, 0, 0, 0)
-        btn_row3_layout.addWidget(btn_independent)
+        btn_row3_layout.addWidget(btn_choose_event)
 
         tab_content = QWidget()
         layout = QVBoxLayout(tab_content)
@@ -553,8 +635,8 @@ class ExportWindow(QWidget):
 
     # Time-series fields: (button label, result-dict key)
     TIMESERIES_FIELDS = [
-        ('Time', 'time_resampled'),
-        ('Pressure', 'pressure_resampled'),
+        ('Time', 'time_upsampled'),
+        ('Pressure', 'pressure_upsampled'),
     ]
 
     # Event fields: (button label, internal key used in _build_event_columns)
@@ -624,8 +706,8 @@ class ExportWindow(QWidget):
     def _build_event_columns(self):
         """Return a dict of event-derived arrays, keyed by internal event key."""
         event_list = self.result.get('event_list') or []
-        time_resampled = self.result.get('time_resampled')
-        if not event_list or time_resampled is None:
+        time_axis = self.result.get('time_upsampled')
+        if not event_list or time_axis is None:
             return {}
 
         event_types = []
@@ -636,10 +718,10 @@ class ExportWindow(QWidget):
 
         for ev in event_list:
             event_types.append(ev.get('type', ''))
-            start_times.append(float(time_resampled[int(ev['start'])]))
-            end_times.append(float(time_resampled[int(ev['end'])]))
+            start_times.append(float(time_axis[int(ev['start'])]))
+            end_times.append(float(time_axis[int(ev['end'])]))
             if 'extrimum' in ev:
-                extremum_times.append(float(time_resampled[int(ev['extrimum'][0])]))
+                extremum_times.append(float(time_axis[int(ev['extrimum'][0])]))
                 extremum_values.append(float(ev['extrimum'][1]))
             else:
                 extremum_times.append(None)
@@ -731,7 +813,7 @@ class ExportWindow(QWidget):
             return {}
         cols = {}
         for label, key in self.ZELANO_SCALAR_FIELDS:
-            cols[label] = [zp[key]]
+            cols[label] = [zp.get(key)]
         # Per-breath volumes as a column
         cols['Inhale-Exhale Volumes'] = zp.get('inhale_exhale_volumes', [])
         return cols
@@ -748,6 +830,384 @@ class IndependentEventsWindow(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel('Independent event analysis — coming soon.'))
+
+
+class ChosenEventWindow(QWidget):
+    """Window for displaying one selected event from the breath-analysis plot.
+
+    The highlighted span edges can be grabbed with the mouse to change the
+    start and end of the event.  Adjacent events are updated accordingly via
+    pipeline.update_event_bounds.
+    """
+
+    def __init__(self, result, event_list, chosen_idx, sample_idx, on_event_type_changed=None, parent=None):
+        super().__init__(parent)
+        self.result = result
+        self.event_list = event_list
+        self.chosen_idx = chosen_idx
+        self.sample_idx = sample_idx
+        self._on_changed_cb = on_event_type_changed  # callback to refresh main window
+
+        # Drag state
+        self._dragging = None          # None, 'start', or 'end'
+        self._drag_current_start = None
+        self._drag_current_end = None
+
+        # Plot references (set by _draw_plot)
+        self.fig = None
+        self.canvas = None
+        self.ax = None
+        self._span = None
+        self._window_start = 0
+        self._window_end = 0
+        self._window_initialized = False
+        self._current_start = 0
+        self._current_end = 0
+
+        self._setup_ui()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _setup_ui(self):
+        event = self.event_list[self.chosen_idx]
+        event_type = event.get('type', 'event').capitalize()
+        self.setWindowTitle(f'Chosen Event - {event_type}')
+        self.resize(760, 460)
+
+        layout = QVBoxLayout(self)
+
+        self.summary_label = QLabel(self._summary_text())
+        layout.addWidget(self.summary_label)
+
+        self.fig = Figure(figsize=(7, 4), dpi=100)
+        self.canvas = FigureCanvas(self.fig)
+        self.ax = self.fig.add_subplot(1, 1, 1)
+
+        self._draw_plot()
+
+        # Mouse event connections for edge dragging
+        self.canvas.mpl_connect('button_press_event', self._on_press)
+        self.canvas.mpl_connect('motion_notify_event', self._on_motion)
+        self.canvas.mpl_connect('button_release_event', self._on_release)
+
+        layout.addWidget(self.canvas)
+
+        type_row = QWidget()
+        type_row_layout = QHBoxLayout(type_row)
+        type_row_layout.setContentsMargins(0, 0, 0, 0)
+        type_row_layout.addStretch()
+        type_row_layout.addWidget(QLabel('Event Type:'))
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(['Inhale', 'Exhale', 'Pause'])
+
+        current_type = str(event.get('type', 'pause')).capitalize()
+        if current_type not in ('Inhale', 'Exhale', 'Pause'):
+            current_type = 'Pause'
+        self.type_combo.setCurrentText(current_type)
+        self.type_combo.currentTextChanged.connect(self._on_type_combo_changed)
+
+        type_row_layout.addWidget(self.type_combo)
+        type_row_layout.addStretch()
+        layout.addWidget(type_row)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _summary_text(self):
+        event = self.event_list[self.chosen_idx]
+        return (
+            f"Type: {event.get('type', '')} | "
+            f"Start: {int(event.get('start', 0))} | "
+            f"End: {int(event.get('end', 0))} | "
+            f"Clicked Index: {int(self.sample_idx)}"
+        )
+
+    def _compute_window_bounds(self):
+        """Return (window_start, window_end) indices for a 13x-event-width context."""
+        event = self.event_list[self.chosen_idx]
+        time = self.result.get('time_upsampled')
+        if time is None or len(time) == 0:
+            return 0, 0
+
+        n = len(time)
+        chosen_start = max(0, min(n - 1, int(event.get('start', 0))))
+        chosen_end = max(chosen_start, min(n - 1, int(event.get('end', 0))))
+
+        event_width = chosen_end - chosen_start + 1
+        window_width = min(n, max(13 * event_width, 1))
+
+        center = (chosen_start + chosen_end) / 2.0
+        window_start = int(round(center - (window_width - 1) / 2.0))
+        window_end = window_start + window_width - 1
+
+        if window_start < 0:
+            window_end += -window_start
+            window_start = 0
+        if window_end > n - 1:
+            window_start = max(0, window_start - (window_end - (n - 1)))
+            window_end = n - 1
+
+        return window_start, window_end
+
+    def _draw_plot(self):
+        """Draw (or redraw) the event plot from scratch."""
+        event = self.event_list[self.chosen_idx]
+        pressure = self.result.get('pressure_upsampled')
+        time = self.result.get('time_upsampled')
+
+        self.ax.cla()
+        self._span = None
+
+        if pressure is None or time is None or len(time) == 0:
+            self.canvas.draw_idle()
+            return
+
+        n = len(time)
+        chosen_start = max(0, min(n - 1, int(event.get('start', 0))))
+        chosen_end = max(chosen_start, min(n - 1, int(event.get('end', 0))))
+
+        self._current_start = chosen_start
+        self._current_end = chosen_end
+
+        if not self._window_initialized:
+            self._window_start, self._window_end = self._compute_window_bounds()
+            self._window_initialized = True
+
+        window_start = self._window_start
+        window_end = self._window_end
+
+        ctx_time = time[window_start:window_end + 1]
+        ctx_pressure = pressure[window_start:window_end + 1]
+        self.ax.plot(ctx_time, ctx_pressure, color='gray', linewidth=1.4, alpha=0.85)
+
+        chosen_time = time[chosen_start:chosen_end + 1]
+        chosen_pressure = pressure[chosen_start:chosen_end + 1]
+        self.ax.plot(chosen_time, chosen_pressure, color='blue', linewidth=2.6, label='Chosen Event')
+
+        self._span = self.ax.axvspan(time[chosen_start], time[chosen_end],
+                                     color='gold', alpha=0.18, zorder=0)
+
+        if 'extrimum' in event:
+            ext_i = int(event['extrimum'][0])
+            ext_v = float(event['extrimum'][1])
+            if 0 <= ext_i < len(time):
+                self.ax.scatter(time[ext_i], ext_v, color='magenta', zorder=4, label='Chosen Extremum')
+
+        self.ax.set_xlim(time[window_start], time[window_end])
+        event_type = event.get('type', 'event').capitalize()
+        self.ax.set_title(f"{event_type} Event")
+        self.ax.set_xlabel('Time (s)')
+        self.ax.set_ylabel('Pressure')
+        self.ax.legend()
+        self.ax.grid(True)
+        self.canvas.draw_idle()
+
+    def _get_edge_tolerance(self):
+        """Return the x-data tolerance equivalent to 8 screen pixels."""
+        try:
+            bbox = self.ax.get_window_extent()
+            xlim = self.ax.get_xlim()
+            x_range = xlim[1] - xlim[0]
+            if bbox.width > 0 and x_range > 0:
+                return 8.0 * x_range / bbox.width
+        except Exception:
+            pass
+        return 0.0
+
+    def _update_span_preview(self, left_x, right_x):
+        """Replace the axvspan to reflect the current drag position."""
+        if self._span is not None:
+            self._span.remove()
+        self._span = self.ax.axvspan(left_x, right_x, color='gold', alpha=0.18, zorder=0)
+        self.canvas.draw_idle()
+
+    def _nearest_sample_idx(self, xdata, time):
+        """Return the nearest sample index on the upsampled time axis."""
+        pos = int(np.clip(np.searchsorted(time, xdata), 0, len(time) - 1))
+        if pos > 0 and abs(time[pos] - xdata) > abs(time[pos - 1] - xdata):
+            pos -= 1
+        return pos
+
+    def _find_event_idx_at_sample(self, sample_idx):
+        """Return the event index that contains sample_idx, or None."""
+        for idx, ev in enumerate(self.event_list):
+            if int(ev['start']) <= sample_idx <= int(ev['end']):
+                return idx
+        return None
+
+    def _center_window_on_chosen_event_keep_size(self):
+        """Recenter x-limits on the chosen event while keeping window width fixed."""
+        time = self.result.get('time_upsampled')
+        if time is None or len(time) == 0:
+            return
+
+        n = len(time)
+        window_width = self._window_end - self._window_start + 1
+        if window_width <= 0:
+            self._window_start, self._window_end = self._compute_window_bounds()
+            window_width = self._window_end - self._window_start + 1
+
+        ev = self.event_list[self.chosen_idx]
+        ev_start = max(0, min(n - 1, int(ev.get('start', 0))))
+        ev_end = max(ev_start, min(n - 1, int(ev.get('end', 0))))
+        center = (ev_start + ev_end) / 2.0
+
+        window_start = int(round(center - (window_width - 1) / 2.0))
+        window_end = window_start + window_width - 1
+
+        if window_start < 0:
+            window_end += -window_start
+            window_start = 0
+        if window_end > n - 1:
+            window_start = max(0, window_start - (window_end - (n - 1)))
+            window_end = n - 1
+
+        self._window_start = window_start
+        self._window_end = window_end
+
+    def _select_chosen_event(self, new_idx, clicked_sample_idx):
+        """Switch highlighted event and redraw with same context width."""
+        if new_idx == self.chosen_idx:
+            return
+
+        self.chosen_idx = new_idx
+        self.sample_idx = clicked_sample_idx
+        self._dragging = None
+        self._drag_current_start = None
+        self._drag_current_end = None
+
+        self._center_window_on_chosen_event_keep_size()
+
+        event_type = str(self.event_list[self.chosen_idx].get('type', 'pause')).capitalize()
+        if event_type not in ('Inhale', 'Exhale', 'Pause'):
+            event_type = 'Pause'
+        self.type_combo.blockSignals(True)
+        self.type_combo.setCurrentText(event_type)
+        self.type_combo.blockSignals(False)
+
+        self._draw_plot()
+        self.summary_label.setText(self._summary_text())
+        self.setWindowTitle(f"Chosen Event - {event_type}")
+
+        if self._on_changed_cb is not None:
+            self._on_changed_cb()
+
+    # ------------------------------------------------------------------
+    # Mouse event handlers for edge dragging
+    # ------------------------------------------------------------------
+
+    def _on_press(self, event):
+        if event.button != 1 or event.inaxes is not self.ax or event.xdata is None:
+            return
+        time = self.result.get('time_upsampled')
+        if time is None:
+            return
+
+        # Double-click selects a different event and recenters using fixed window size.
+        if event.dblclick:
+            sample_idx = self._nearest_sample_idx(event.xdata, time)
+            clicked_idx = self._find_event_idx_at_sample(sample_idx)
+            if clicked_idx is not None and clicked_idx != self.chosen_idx:
+                self._select_chosen_event(clicked_idx, sample_idx)
+            return
+
+        tol = self._get_edge_tolerance()
+        left_edge = time[self._current_start]
+        right_edge = time[self._current_end]
+
+        if abs(event.xdata - left_edge) <= tol:
+            self._dragging = 'start'
+            self._drag_current_start = self._current_start
+            self._drag_current_end = self._current_end
+        elif abs(event.xdata - right_edge) <= tol:
+            self._dragging = 'end'
+            self._drag_current_start = self._current_start
+            self._drag_current_end = self._current_end
+        else:
+            self._dragging = None
+
+    def _on_motion(self, event):
+        time = self.result.get('time_upsampled')
+        if time is None:
+            return
+
+        if self._dragging is None:
+            # Update cursor to hint at draggable edges
+            if event.inaxes is self.ax and event.xdata is not None:
+                tol = self._get_edge_tolerance()
+                if (abs(event.xdata - time[self._current_start]) <= tol or
+                        abs(event.xdata - time[self._current_end]) <= tol):
+                    self.canvas.setCursor(Qt.SizeHorCursor)
+                else:
+                    self.canvas.setCursor(Qt.ArrowCursor)
+            else:
+                self.canvas.setCursor(Qt.ArrowCursor)
+            return
+
+        if event.xdata is None:
+            return
+
+        # Snap to nearest sample
+        pos = int(np.clip(np.searchsorted(time, event.xdata), 0, len(time) - 1))
+
+        if self._dragging == 'start':
+            # Allow extending into previous event; previous must have >= 1 sample
+            if self.chosen_idx > 0:
+                min_idx = int(self.event_list[self.chosen_idx - 1]['start']) + 1
+            else:
+                min_idx = 0
+            new_start = max(min_idx, min(pos, self._drag_current_end - 1))
+            self._drag_current_start = new_start
+        else:  # 'end'
+            if self.chosen_idx < len(self.event_list) - 1:
+                # Allow extending into next event; next must have >= 1 sample
+                max_idx = int(self.event_list[self.chosen_idx + 1]['end']) - 1
+            else:
+                max_idx = len(time) - 1
+            new_end = max(self._drag_current_start + 1, min(pos, max_idx))
+            self._drag_current_end = new_end
+
+        self._update_span_preview(time[self._drag_current_start], time[self._drag_current_end])
+
+    def _on_release(self, event):
+        if event.button != 1 or self._dragging is None:
+            return
+
+        time = self.result.get('time_upsampled')
+        if time is None:
+            self._dragging = None
+            return
+
+        new_start = self._drag_current_start if self._dragging == 'start' else None
+        new_end = self._drag_current_end if self._dragging == 'end' else None
+
+        pipeline.update_event_bounds(self.result, self.chosen_idx, new_start, new_end)
+
+        self._dragging = None
+        self._drag_current_start = None
+        self._drag_current_end = None
+
+        self._draw_plot()
+        self.summary_label.setText(self._summary_text())
+
+        if self._on_changed_cb is not None:
+            self._on_changed_cb()
+
+    # ------------------------------------------------------------------
+    # Type combo handler
+    # ------------------------------------------------------------------
+
+    def _on_type_combo_changed(self, selected_text):
+        pipeline.change_event_type(self.result, self.chosen_idx, selected_text.lower())
+
+        self.summary_label.setText(self._summary_text())
+        self.setWindowTitle(f"Chosen Event - {selected_text}")
+
+        if self._on_changed_cb is not None:
+            self._on_changed_cb()
 
 
 class BaselineEditor:

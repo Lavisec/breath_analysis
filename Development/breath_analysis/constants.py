@@ -3,6 +3,11 @@ AMP_DISCRATISATION = 0.0166 # The amplitude discretisation of the meassurement.
 # ----- Initial Upsample Frequency -----
 INITIAL_UPSAMPLE = 100 # Hz, the initial upsample frequency to which all signals will be resampled before further processing.
 
+# ----- Windowing -----
+BASELINE_WINDOW = 3600        # seconds, the window size for baseline estimation (code debt: should be in samples, not seconds)
+INH_AMP_WINDOW = 1000         # seconds, the window size for inhalation amplitude estimation
+EXH_AMP_WINDOW = 1000         # seconds, the window size for exhalation amplitude estimation
+
 # ----- Secundo Const -----
 SECUNDO_CONST = 18 
 

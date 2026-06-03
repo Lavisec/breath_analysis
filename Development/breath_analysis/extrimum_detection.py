@@ -1,35 +1,36 @@
 import numpy as np
 from scipy import stats
+import matplotlib.pyplot as plt
 
 from preprocessing import upsample
 from constants import (SECOND_UPSAMPLE, DURATION_LOW_THRESHOLD, DURATION_HIGH_THRESHOLD,
                        PEAK_ZSCORE_THRESHOLD, PEAK_BOUNDARY_ZSCORE)
 
-def find_extremum_points(data):
+def find_extremum_points(dataset):
     """
     Detect extremum points (peaks and troughs) in the pressure signal.
 
     Parameters:
     -----------
-    data : dict
+    dataset : dict
         Dictionary containing 'time', 'pressure_filtered', 'inh_amp_th', and 'exh_amp_th'.
 
     Returns:
     --------
-    data : dict
+    dataset : dict
         Updated data dictionary with 'inhale_se_points' and 'exhale_se_points' added as lists of tuples
         containing the start and end indices of each detected inhale and exhale.
     """
-    for dataset in data:
-        dataset['pressure_upsampled'], dataset['time_upsampled'] = upsample(dataset['time'], 
-                                                                                   dataset['pressure'], SECOND_UPSAMPLE)
-        dataset['upsampled_samp_rate'] = SECOND_UPSAMPLE
-        # dataset['peaks'], dataset['troughs'] = find_extrema_scipy(dataset)
-        dataset['peaks'], dataset['troughs'] = find_extrema_se(dataset)
-        dataset['event_list'] = create_event_list(dataset)
-        dataset = remove_outliers(dataset)
-        
-    return data
+    dataset['pressure_upsampled'], dataset['time_upsampled'] = upsample(
+        dataset['time'], dataset['pressure'], SECOND_UPSAMPLE
+    )
+    dataset['upsampled_samp_rate'] = SECOND_UPSAMPLE
+    # dataset['peaks'], dataset['troughs'] = find_extrema_scipy(dataset)
+    dataset['peaks'], dataset['troughs'] = find_extrema_se(dataset)
+    dataset['event_list'] = create_event_list(dataset)
+    dataset = remove_outliers(dataset)
+
+    return dataset
 
 def find_extrema_scipy(dataset):
     """
@@ -80,6 +81,9 @@ def find_extrema_se(dataset):
         time_th = dataset['time_th'] * samp_rate
 
         target_points = np.where(pressure > amp_th)[0]
+        if len(target_points) == 0:
+            print('find_extrema_se - No points above amp_th')
+            continue
         target_diffs = np.diff(target_points)
 
         start_idx = target_points[np.where(target_diffs > time_th)[0] + 1] # Code debt
@@ -123,8 +127,13 @@ def create_event_list(dataset):
     event_list : list of tuples
         List of (event_type, start_index, end_index) for each detected event, where event_type is 'inhale', 'exhale' or 'pause'.
     """
+    dataset['breath_list'] = []
+    
     peaks = dataset['peaks']
     troughs = dataset['troughs']
+    if len(peaks) == 0 or len(troughs) == 0:
+        print('create_event_list - No peaks or troughs found')
+        return []
     pressure = dataset['pressure_upsampled']
     freq = dataset['upsampled_samp_rate']
 
@@ -181,6 +190,31 @@ def create_event_list(dataset):
         })
     event_list.append(extrema_list[-1])
 
+    # Taking care of start and end of the signal
+    if event_list[0]['start'] > 0:
+        event_list.insert(0, {
+            'start': 0,
+            'end': event_list[0]['start'],
+            'duration': event_list[0]['start'] / freq,
+            'type': 'pause'
+        })
+    if event_list[-1]['end'] < len(pressure) - 1:
+        event_list.append({
+            'start': event_list[-1]['end'],
+            'end': len(pressure) - 1,
+            'duration': (len(pressure) - 1 - event_list[-1]['end']) / freq,
+            'type': 'pause'
+        })
+
+    breath_list = []
+    for ind in range(len(event_list) - 2):
+        if event_list[ind]['type'] == 'inhale' and event_list[ind + 2]['type'] == 'exhale':
+            breath_list.append({
+                'start': event_list[ind]['start'],
+                'end': event_list[ind + 2]['end'],
+                'inhale_exhale': (event_list[ind], event_list[ind + 2])
+            })
+    dataset['breath_list'] = breath_list
     return event_list
 
 def remove_outliers(dataset):
@@ -200,6 +234,9 @@ def remove_outliers(dataset):
     event_list = dataset['event_list']
     peaks = dataset['peaks']
     troughs = dataset['troughs']
+    if len(peaks) == 0 or len(troughs) == 0:
+        print('remove_outliers - No peaks or troughs found')
+        return dataset
 
     delete_points = []
 
