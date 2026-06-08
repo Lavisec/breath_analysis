@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QListWidgetItem, QLabel, QSizePolicy,
-    QFileDialog, QMessageBox, QInputDialog, QTabWidget, QToolButton, QMenu, QAction, QComboBox
+    QFileDialog, QMessageBox, QTabWidget, QToolButton, QMenu, QAction, QComboBox
 )
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -31,6 +31,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.csv_files = []  # tracks all loaded CSV paths
+        self.analysis_results = []  # latest results object shown in tabs
+        self._export_all_windows = []
         self.init_ui()
 
     def init_ui(self):
@@ -86,6 +88,12 @@ class MainWindow(QMainWindow):
         btn_run.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         btn_run.clicked.connect(self._on_run)
         layout.addWidget(btn_run)
+
+        self.btn_export_all = QPushButton('Export All Results')
+        self.btn_export_all.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_export_all.setVisible(False)
+        self.btn_export_all.clicked.connect(self._on_export_all)
+        layout.addWidget(self.btn_export_all)
 
         return panel
 
@@ -143,7 +151,19 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, 'Analysis error', str(e))
             return
+        self.analysis_results = results
         display_results(self.tab_widget, results)
+        self.btn_export_all.setVisible(bool(results))
+
+    def _on_export_all(self):
+        """Open bulk export window for all currently analyzed results."""
+        if not self.analysis_results:
+            QMessageBox.warning(self, 'No results', 'Run analysis first to enable export for all results.')
+            return
+        # Open as a standalone top-level window (not embedded in the main UI).
+        win = ExportAllResultsWindow(self.analysis_results)
+        win.show()
+        self._export_all_windows.append(win)
 
 
 def browse_file_or_directory(parent):
@@ -422,7 +442,8 @@ def display_results(tab_widget, results):
 
         btn_pressure.setMenu(pressure_menu)
 
-        def make_start(editors=editors, tb=toolbar):
+        def make_start(editors=editors, tb=toolbar,
+                       btn_edit=btn_edit, btn_stop=btn_stop, btn_undo=btn_undo):
             def start():
                 # Deactivate any active toolbar mode (zoom/pan) before editing
                 try:
@@ -438,7 +459,8 @@ def display_results(tab_widget, results):
             return start
 
         def make_stop(editors=editors, state=state, file_results=file_results,
-                       draw=draw_pressure):
+                       draw=draw_pressure,
+                       btn_edit=btn_edit, btn_stop=btn_stop, btn_undo=btn_undo):
             def stop():
                 ed = editors[0]
                 if ed:
@@ -817,6 +839,208 @@ class ExportWindow(QWidget):
         # Per-breath volumes as a column
         cols['Inhale-Exhale Volumes'] = zp.get('inhale_exhale_volumes', [])
         return cols
+
+
+class ExportAllResultsWindow(QWidget):
+    """Window for exporting all analyzed results into one new directory."""
+
+    TIMESERIES_FIELDS = ExportWindow.TIMESERIES_FIELDS
+    EVENT_FIELDS = ExportWindow.EVENT_FIELDS
+    ZELANO_SCALAR_FIELDS = ExportWindow.ZELANO_SCALAR_FIELDS
+
+    def __init__(self, results, parent=None):
+        super().__init__(parent)
+        self.setWindowFlag(Qt.Window, True)
+        self.results = results  # list[list[result_dict]] shared with UI; includes live edits
+        self.setWindowTitle('Export All Results')
+        self.resize(560, 180)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel('Select columns to export for all results:'))
+
+        self._toggle_btns = {}
+        checked_style = 'QPushButton:checked { background-color: #4a90d9; color: white; }'
+
+        fields_row = QWidget()
+        fields_layout = QHBoxLayout(fields_row)
+        fields_layout.setContentsMargins(0, 0, 0, 0)
+        for label, key in self.TIMESERIES_FIELDS + self.EVENT_FIELDS:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(True)
+            btn.setStyleSheet(checked_style)
+            fields_layout.addWidget(btn)
+            self._toggle_btns[key] = btn
+        fields_layout.addStretch()
+        layout.addWidget(fields_row)
+
+        zelano_row = QWidget()
+        zelano_layout = QHBoxLayout(zelano_row)
+        zelano_layout.setContentsMargins(0, 0, 0, 0)
+        btn_zelano = QPushButton('Zelano Parameters')
+        btn_zelano.setCheckable(True)
+        btn_zelano.setChecked(True)
+        btn_zelano.setStyleSheet(checked_style)
+        zelano_layout.addWidget(btn_zelano)
+        zelano_layout.addStretch()
+        self._toggle_btns['zelano'] = btn_zelano
+        layout.addWidget(zelano_row)
+
+        layout.addStretch()
+
+        btn_save = QPushButton('Save')
+        btn_save.clicked.connect(self._on_save)
+        layout.addWidget(btn_save)
+
+    def _build_event_columns(self, result):
+        """Return a dict of event-derived arrays, keyed by internal event key."""
+        event_list = result.get('event_list') or []
+        time_axis = result.get('time_upsampled')
+        if not event_list or time_axis is None:
+            return {}
+
+        event_types = []
+        start_times = []
+        end_times = []
+        extremum_times = []
+        extremum_values = []
+
+        for ev in event_list:
+            event_types.append(ev.get('type', ''))
+            start_times.append(float(time_axis[int(ev['start'])]))
+            end_times.append(float(time_axis[int(ev['end'])]))
+            if 'extrimum' in ev:
+                extremum_times.append(float(time_axis[int(ev['extrimum'][0])]))
+                extremum_values.append(float(ev['extrimum'][1]))
+            else:
+                extremum_times.append(None)
+                extremum_values.append(None)
+
+        return {
+            'event_type': event_types,
+            'event_start_time': start_times,
+            'event_end_time': end_times,
+            'extremum_time': extremum_times,
+            'extremum_value': extremum_values,
+        }
+
+    def _build_zelano_columns(self, result):
+        """Return a dict of Zelano parameter columns, keyed by human-readable label."""
+        zp = result.get('zelano_parameters')
+        if not zp:
+            return {}
+        cols = {}
+        for label, key in self.ZELANO_SCALAR_FIELDS:
+            cols[label] = [zp.get(key)]
+        cols['Inhale-Exhale Volumes'] = zp.get('inhale_exhale_volumes', [])
+        return cols
+
+    def _write_single_result_csv(self, path, result, ts_keys, ev_keys, include_zelano):
+        """Write one result dict to CSV using the same structure as ExportWindow."""
+        key_to_label = {key: label for label, key in self.TIMESERIES_FIELDS + self.EVENT_FIELDS}
+
+        selected_ts = {key: result[key] for key in ts_keys if key in result}
+        event_cols = self._build_event_columns(result)
+        selected_ev = {key: event_cols[key] for key in ev_keys if key in event_cols}
+        zelano_cols = self._build_zelano_columns(result) if include_zelano else {}
+
+        if not selected_ts and not selected_ev and not zelano_cols:
+            raise ValueError('No selected columns are available for this result.')
+
+        import pandas as pd
+        import csv
+
+        main_combined = {}
+        for k, v in selected_ts.items():
+            main_combined[key_to_label[k]] = pd.Series(v)
+        for k, v in selected_ev.items():
+            main_combined[key_to_label[k]] = pd.Series(v)
+
+        main_df = pd.DataFrame(main_combined)
+
+        if zelano_cols:
+            zelano_df = pd.DataFrame({col: pd.Series(v) for col, v in zelano_cols.items()})
+            main_col_names = list(main_df.columns)
+            zelano_col_names = list(zelano_df.columns)
+            n_main = len(main_col_names)
+            n_zelano = len(zelano_col_names)
+            max_rows = max(len(main_df), len(zelano_df))
+
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(main_col_names + [''] + ['Zelano Parameters'] + [''] * (n_zelano - 1))
+                writer.writerow([''] * n_main + [''] + zelano_col_names)
+                for i in range(max_rows):
+                    row = []
+                    for col in main_col_names:
+                        row.append(main_df[col].iloc[i] if i < len(main_df) else '')
+                    row.append('')
+                    for col in zelano_col_names:
+                        row.append(zelano_df[col].iloc[i] if i < len(zelano_df) else '')
+                    writer.writerow(row)
+        else:
+            main_df.to_csv(path, index=False)
+
+    def _on_save(self):
+        ts_keys = {key for _, key in self.TIMESERIES_FIELDS if self._toggle_btns[key].isChecked()}
+        ev_keys = {key for _, key in self.EVENT_FIELDS if self._toggle_btns[key].isChecked()}
+        include_zelano = self._toggle_btns['zelano'].isChecked()
+
+        if not ts_keys and not ev_keys and not include_zelano:
+            QMessageBox.warning(self, 'Nothing selected', 'Please select at least one column group to export.')
+            return
+
+        export_dir = QFileDialog.getExistingDirectory(self, 'Choose Directory to Save All Results', '')
+        if not export_dir:
+            return
+
+        written = 0
+        skipped = []
+        used_names = set()
+
+        for file_idx, file_results in enumerate(self.results):
+            if not file_results:
+                continue
+
+            n_cols = len(file_results)
+            for pressure_idx, result in enumerate(file_results):
+                # Ensure analysis-derived fields exist for bulk export.
+                if 'event_list' not in result or 'zelano_parameters' not in result:
+                    file_results[pressure_idx] = pipeline.continue_analysis(result)
+                    result = file_results[pressure_idx]
+
+                base_name = os.path.splitext(os.path.basename(result.get('filename', f'dataset_{file_idx + 1}.csv')))[0]
+                if n_cols > 1:
+                    base_name = f'{base_name}_pressure{pressure_idx + 1}'
+
+                candidate = f'{base_name}.csv'
+                suffix = 2
+                while candidate in used_names:
+                    candidate = f'{base_name}_{suffix}.csv'
+                    suffix += 1
+                used_names.add(candidate)
+
+                out_path = os.path.join(export_dir, candidate)
+                try:
+                    self._write_single_result_csv(out_path, result, ts_keys, ev_keys, include_zelano)
+                    written += 1
+                except Exception as e:
+                    skipped.append(f'{candidate}: {e}')
+
+        if written == 0:
+            msg = 'No files were exported.'
+            if skipped:
+                msg += '\n\nDetails:\n' + '\n'.join(skipped[:8])
+            QMessageBox.warning(self, 'Export completed with no files', msg)
+            return
+
+        if skipped:
+            msg = (f'Exported {written} files to:\n{export_dir}\n\n'
+                   f'Skipped {len(skipped)} files.\n\nDetails:\n' + '\n'.join(skipped[:8]))
+            QMessageBox.warning(self, 'Export completed with warnings', msg)
+        else:
+            QMessageBox.information(self, 'Saved', f'Exported {written} files to:\n{export_dir}')
+        self.close()
 
 
 class IndependentEventsWindow(QWidget):

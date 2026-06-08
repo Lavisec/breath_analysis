@@ -22,7 +22,7 @@ def find_extremum_points(dataset):
         containing the start and end indices of each detected inhale and exhale.
     """
     dataset['pressure_upsampled'], dataset['time_upsampled'] = upsample(
-        dataset['time'], dataset['pressure'], SECOND_UPSAMPLE
+        dataset['time'], dataset['pressure_bc'], SECOND_UPSAMPLE
     )
     dataset['upsampled_samp_rate'] = SECOND_UPSAMPLE
     # dataset['peaks'], dataset['troughs'] = find_extrema_scipy(dataset)
