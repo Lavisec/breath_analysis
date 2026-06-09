@@ -273,8 +273,14 @@ def find_baseline(dataset, bl_parameters):
     amp_discratisation = dataset['amp_discratisation']
     pressure = dataset.get('pressure', [])
 
+    counts, bins = np.histogram(pressure, bins=BL_HIST_RES)
+    init_max_index = counts.argmax()
+    init_baseline_val = bins[init_max_index]
+    
     hist_range = BL_HIST_RES * amp_discratisation / 2
-    counts, bins = np.histogram(pressure, bins=BL_HIST_RES, range=(-hist_range, hist_range))
+    counts, bins = np.histogram(pressure, bins=BL_HIST_RES,
+                                range=(init_baseline_val - hist_range, init_baseline_val + hist_range))
+    
     max_index = counts.argmax()
     baseline_val = bins[max_index]
 

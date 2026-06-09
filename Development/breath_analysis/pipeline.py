@@ -183,5 +183,5 @@ def update_event_bounds(result, event_idx, new_start=None, new_end=None):
     return result
 
 if __name__ == "__main__":
-    file_path = "/home/aviv/Work/Anat's Lab/Breath Analysis/data/data_20221106_073425_AA013.csv"
+    file_path = "/home/aviv/Work/Anat's Lab/Breath Analysis/data/Odd/102ses05_segment1_TE-50_to_TE-0.csv"
     results = analyze_file(file_path)

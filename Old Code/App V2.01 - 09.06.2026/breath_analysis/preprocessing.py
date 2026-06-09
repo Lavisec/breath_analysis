@@ -26,7 +26,7 @@ def preprocess_file(data):
 
     for dataset in data:
         nl = find_noise_level(dataset)
-        dataset['amp_discratisation'], dataset['nl'] = nl
+        dataset['nl'] = nl
         dataset['pressure'], dataset['time'] = upsample(dataset['time_raw'], dataset['pressure_raw'], INITIAL_UPSAMPLE)
         dataset['samp_rate'] = INITIAL_UPSAMPLE
         dataset['baseline'] = WMD(dataset, {'window_length':BASELINE_WINDOW, 'overlap':50},
@@ -99,10 +99,9 @@ def find_noise_level(dataset):
     pressure = dataset['pressure_raw']
 
     noise_range = np.diff(np.unique(np.sort(pressure)))
-    amp_discratisation = np.min(noise_range)
-    nl = amp_discratisation * SECUNDO_CONST
+    nl = np.min(noise_range) * SECUNDO_CONST
 
-    return amp_discratisation, nl
+    return nl
     
 def upsample(time, pressure, target_rate):
     """
@@ -183,7 +182,6 @@ def WMD(dataset, WMD_parameters, func, **kwargs):
             'pressure': dataset.get('pressure', [])[start_ind:end_ind],
             'pressure_bc': dataset.get('pressure_bc', [])[start_ind:end_ind],
             'samp_rate': dataset.get('samp_rate', None),
-            'amp_discratisation': dataset.get('amp_discratisation', None),
             'nl': dataset.get('nl', None)
         }
         result = func(window_dataset, **kwargs)
@@ -202,7 +200,6 @@ def WMD(dataset, WMD_parameters, func, **kwargs):
             'pressure': dataset.get('pressure', [])[start_ind:end_ind],
             'pressure_bc': dataset.get('pressure_bc', [])[start_ind:end_ind],
             'samp_rate': dataset.get('samp_rate', None),
-            'amp_discratisation': dataset.get('amp_discratisation', None),
             'nl': dataset.get('nl', None)
         }
         result = func(window_dataset, **kwargs)
@@ -218,7 +215,6 @@ def WMD(dataset, WMD_parameters, func, **kwargs):
             'pressure': dataset.get('pressure', [])[start_ind:end_ind],
             'pressure_bc': dataset.get('pressure_bc', [])[start_ind:end_ind],
             'samp_rate': dataset.get('samp_rate', None),
-            'amp_discratisation': dataset.get('amp_discratisation', None),
             'nl': dataset.get('nl', None)
         }
         result = func(window_dataset, **kwargs)
@@ -270,17 +266,13 @@ def find_baseline(dataset, bl_parameters):
         The estimated baseline curve.
     """
 
-    amp_discratisation = dataset['amp_discratisation']
+    n = bl_parameters['n']
     pressure = dataset.get('pressure', [])
+    pressure_len = len(pressure)
+    baselines_vals = []
 
-    counts, bins = np.histogram(pressure, bins=BL_HIST_RES)
-    init_max_index = counts.argmax()
-    init_baseline_val = bins[init_max_index]
-    
-    hist_range = BL_HIST_RES * amp_discratisation / 2
-    counts, bins = np.histogram(pressure, bins=BL_HIST_RES,
-                                range=(init_baseline_val - hist_range, init_baseline_val + hist_range))
-    
+    hist_range = BL_HIST_RES * AMP_DISCRATISATION / 2
+    counts, bins = np.histogram(pressure, bins=BL_HIST_RES, range=(-hist_range, hist_range))
     max_index = counts.argmax()
     baseline_val = bins[max_index]
 
